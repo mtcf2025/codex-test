@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .character import Character
 from .constants import (
@@ -26,6 +26,21 @@ class ActionRequest:
     dano: Optional[str] = None
 
 
+@dataclass
+class CharacterCreationData:
+    nome: str
+    epoca: str
+    reino: str
+    historia: str
+    nivel: int
+    classe: str
+    antecedente: str
+    divindade: str
+    habilidades: Dict[str, int]
+    pericias: List[str]
+    equipamentos: List[str]
+
+
 class GameMaster:
     """Gerencia a sessão de RPG respeitando as regras fornecidas."""
 
@@ -35,7 +50,7 @@ class GameMaster:
         self.capitulos: List[Chapter] = []
 
     # ----- criação de ficha -----
-    def iniciar_criacao_personagem(self) -> None:
+    def iniciar_criacao_personagem(self) -> Character:
         print("Vamos forjar sua lenda nas terras de Westeros.")
         epoca = input(
             "Em qual época você gostaria de começar a campanha? (padrão: Livro 1) "
@@ -52,7 +67,7 @@ class GameMaster:
         pericias = self._escolher_pericias()
         equipamentos = self._definir_equipamentos()
 
-        self.personagem = Character(
+        dados = CharacterCreationData(
             nome=input("Qual o nome do personagem? "),
             epoca=epoca,
             reino=reino,
@@ -62,12 +77,30 @@ class GameMaster:
             antecedente=antecedente,
             divindade=divindade,
             habilidades=habilidades,
-            pericias_treinadas=pericias,
+            pericias=pericias,
             equipamentos=equipamentos,
         )
+        personagem = self.create_character(dados)
         print("Ficha criada. Resumo:")
-        print(self.personagem.resumo())
+        print(personagem.resumo())
         print("Guarde essa ficha; ela será usada em todas as cenas.")
+        return personagem
+
+    def create_character(self, dados: CharacterCreationData) -> Character:
+        self.personagem = Character(
+            nome=dados.nome,
+            epoca=dados.epoca,
+            reino=dados.reino,
+            historia=dados.historia,
+            nivel=dados.nivel,
+            classe=dados.classe,
+            antecedente=dados.antecedente,
+            divindade=dados.divindade,
+            habilidades=dados.habilidades,
+            pericias_treinadas=dados.pericias,
+            equipamentos=dados.equipamentos,
+        )
+        return self.personagem
 
     def _coletar_habilidades(self) -> Dict[str, int]:
         print("Vamos definir os atributos conforme D&D 5e. Informe valores entre 3 e 20.")
@@ -104,7 +137,7 @@ class GameMaster:
         return [item.strip() for item in itens.split(",") if item.strip()]
 
     # ----- narrativa -----
-    def iniciar_capitulo(self) -> None:
+    def iniciar_capitulo(self) -> Chapter:
         if not self.personagem:
             raise RuntimeError("Crie um personagem antes de iniciar a aventura.")
         if not self.capitulos:
@@ -118,19 +151,35 @@ class GameMaster:
             )
         self.capitulo_atual = capitulo
         self.capitulos.append(capitulo)
-        print(capitulo.introducao())
+        return capitulo
 
     # ----- testes e rolagens -----
-    def solicitar_acao(self) -> None:
+    def solicitar_acao(self) -> Optional[Dict[str, Any]]:
         if not self.personagem or not self.capitulo_atual:
             print("Você precisa iniciar um capítulo antes de agir.")
-            return
+            return None
         descricao = input("Descreva sua ação: ")
         tipo = self._selecionar_tipo_teste()
         dificuldade = self._selecionar_dificuldade()
-        request = self._montar_acao(tipo, dificuldade)
+        extra: Dict[str, Any] = {}
+        if tipo == "Perícia":
+            extra["pericia"] = self._escolher_pericia_para_teste()
+        elif tipo == "Ataque":
+            extra["arma"] = input("Qual arma está sendo usada? ") or "espada longa"
+            extra["dano"] = input("Qual é o dado de dano da arma? (ex.: 1d8) ") or "1d8"
+        else:
+            extra["escola"] = input("Qual tipo de magia? (piromancia de R'hllor, feitiços dos Filhos da Floresta, etc.) ")
+            extra["habilidade"] = (
+                input("Usa qual habilidade base? (Inteligência, Sabedoria ou Carisma) ")
+                or "Sabedoria"
+            )
+            extra["dano"] = input("Qual é o efeito/dado de dano da magia? (ex.: 2d6 fogo vivo) ") or "2d6 fogo vivo"
+        request = self.preparar_acao(tipo, dificuldade, **extra)
         request.descricao = descricao
-        self._executar_acao(request)
+        consentimento = input("Posso rolar os dados? (s/n) ")
+        resultado = self.executar_acao(request, consentimento.strip().lower().startswith("s"))
+        self._exibir_resultado(resultado)
+        return resultado
 
     def _selecionar_tipo_teste(self) -> str:
         opcoes = ["Perícia", "Ataque", "Magia"]
@@ -144,10 +193,10 @@ class GameMaster:
         valor = int(input("Informe a CD desejada: ") or "15")
         return max(5, min(30, valor))
 
-    def _montar_acao(self, tipo: str, dificuldade: int) -> ActionRequest:
+    def preparar_acao(self, tipo: str, dificuldade: int, **kwargs: Any) -> ActionRequest:
         assert self.personagem
         if tipo == "Perícia":
-            pericia = self._escolher_pericia_para_teste()
+            pericia = kwargs.get("pericia") or self._escolher_pericia_para_teste()
             bonus = self.personagem.pericia_bonus(pericia)
             return ActionRequest(
                 descricao="",
@@ -158,10 +207,10 @@ class GameMaster:
                 bonus=bonus,
             )
         if tipo == "Ataque":
-            arma = input("Qual arma está sendo usada? ") or "espada longa"
+            arma = kwargs.get("arma") or "espada longa"
             habilidade = "Força" if "arco" not in arma.lower() else "Destreza"
             bonus = self.personagem.habilidade_mod(habilidade) + self.personagem.bonus_proficiencia
-            dano = input("Qual é o dado de dano da arma? (ex.: 1d8) ") or "1d8"
+            dano = kwargs.get("dano") or "1d8"
             return ActionRequest(
                 descricao="",
                 tipo_teste=f"Ataque com {arma}",
@@ -172,10 +221,10 @@ class GameMaster:
                 dano=dano,
             )
         # magia
-        escola = input("Qual tipo de magia? (piromancia de R'hllor, feitiços dos Filhos da Floresta, etc.) ")
-        habilidade = input("Usa qual habilidade base? (Inteligência, Sabedoria ou Carisma) ") or "Sabedoria"
+        escola = kwargs.get("escola") or "Magia ancestral"
+        habilidade = kwargs.get("habilidade") or "Sabedoria"
         bonus = self.personagem.habilidade_mod(habilidade) + self.personagem.bonus_proficiencia
-        dano = input("Qual é o efeito/dado de dano da magia? (ex.: 2d6 fogo vivo) ") or "2d6 fogo vivo"
+        dano = kwargs.get("dano") or "2d6 fogo vivo"
         return ActionRequest(
             descricao="",
             tipo_teste=f"Conjuração: {escola}",
@@ -194,60 +243,70 @@ class GameMaster:
         escolha = int(input("Número da perícia: ") or "1")
         return opcoes[escolha - 1]
 
-    def _executar_acao(self, request: ActionRequest) -> None:
+    def executar_acao(self, request: ActionRequest, consentido: bool = True) -> Dict[str, Any]:
         assert self.personagem
-        print(f"Tipo de teste: {request.tipo_teste}")
-        print(
-            f"Rolagem necessária: {request.dado_quantidade}d{request.dado_faces} + {request.bonus:+} "
-            f"contra dificuldade {request.dificuldade}"
-        )
-        consentimento = input("Posso rolar os dados? (s/n) ")
-        if consentimento.strip().lower().startswith("s"):
-            resultado = roll_dice(request.dado_quantidade, request.dado_faces)
-            total = sum(resultado) + request.bonus
-            dados_texto = " + ".join(str(r) for r in resultado)
-            print(f"Resultado da rolagem: {dados_texto} + {request.bonus:+} = {total}")
-            if total >= request.dificuldade:
-                print(
-                    "Sucesso! O destino favorece seus passos, como diria George Martin: cada açoite "
-                    "de neve ecoa em sua vitória."
-                )
-                if request.dano:
-                    self._resolver_dano(request.dano)
-            else:
-                print(
-                    "Fracasso. A canção dos Sete Reinos lembra que nem todo aço encontra o alvo, e "
-                    "consequências surgirão."
-                )
+        resultado: Dict[str, Any] = {
+            "tipo": request.tipo_teste,
+            "descricao": request.descricao,
+            "dificuldade": request.dificuldade,
+            "bonus": request.bonus,
+            "dados": [],
+            "consentido": consentido,
+        }
+        if not consentido:
+            resultado["mensagem"] = "Jogador optou por não rolar os dados."
+            return resultado
+        rolagem = roll_dice(request.dado_quantidade, request.dado_faces)
+        total = sum(rolagem) + request.bonus
+        resultado["dados"] = rolagem
+        resultado["total"] = total
+        resultado["expressao"] = " + ".join(str(r) for r in rolagem)
+        sucesso = total >= request.dificuldade
+        resultado["sucesso"] = sucesso
+        if sucesso:
+            resultado["mensagem"] = (
+                "Sucesso! O destino favorece seus passos, como diria George Martin: cada açoite "
+                "de neve ecoa em sua vitória."
+            )
+            if request.dano:
+                resultado["dano"] = self._resolver_dano(request.dano)
         else:
-            print("Você optou por não rolar. Descreva outra abordagem.")
+            resultado["mensagem"] = (
+                "Fracasso. A canção dos Sete Reinos lembra que nem todo aço encontra o alvo, e "
+                "consequências surgirão."
+            )
+        return resultado
 
-    def _resolver_dano(self, dano: str) -> None:
+    def _resolver_dano(self, dano: str) -> Dict[str, Any]:
         if "d" not in dano:
-            print(f"Efeito narrativo: {dano}")
-            return
+            return {"efeito": dano}
         partes = dano.lower().split("d")
         try:
             quantidade = int(partes[0])
             resto = partes[1].split()
             faces = int(resto[0])
         except (ValueError, IndexError):
-            print(f"Não foi possível interpretar o dado de dano '{dano}'.")
-            return
+            return {"erro": f"Não foi possível interpretar o dado de dano '{dano}'."}
         rolagens = roll_dice(quantidade, faces)
         total = sum(rolagens)
         detalhes = " + ".join(str(r) for r in rolagens)
         efeito = " ".join(resto[1:]) if len(resto) > 1 else "dano"
-        print(f"Dano causado: {detalhes} = {total} ({efeito})")
+        return {"detalhes": detalhes, "total": total, "efeito": efeito}
 
     # ----- XP e recompensas -----
-    def concluir_capitulo(self) -> None:
+    def concluir_capitulo(self, dificuldade: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if not self.personagem or not self.capitulo_atual:
             print("Nenhum capítulo ativo para concluir.")
-            return
-        dificuldade = input(
-            "Qual foi a dificuldade geral do capítulo? (trivial/fácil/médio/difícil/mortal) "
-        ).strip().lower() or "médio"
+            return None
+        if dificuldade is None:
+            dificuldade = (
+                input(
+                    "Qual foi a dificuldade geral do capítulo? (trivial/fácil/médio/difícil/mortal) "
+                )
+                .strip()
+                .lower()
+                or "médio"
+            )
         xp = CHAPTER_DIFFICULTY_XP.get(dificuldade, 600)
         self.personagem.ganhar_xp(xp)
         self.personagem.registrar_capitulo()
@@ -255,21 +314,50 @@ class GameMaster:
         print(
             f"Capítulo concluído. Distribuindo {xp} XP conforme as tabelas do Livro do Mestre D&D 5e."
         )
-        self._entregar_recompensas(dificuldade)
+        recompensas = self._entregar_recompensas(dificuldade)
         self.capitulo_atual = None
+        return {"xp": xp, "dificuldade": dificuldade, "recompensas": recompensas}
 
-    def _entregar_recompensas(self, dificuldade: str) -> None:
+    def _entregar_recompensas(self, dificuldade: str) -> Dict[str, Any]:
         for tabela in LOOT_TABLES:
             if tabela.difficulty == dificuldade:
-                print(
+                mensagem = (
                     f"Recompensa: {tabela.coins} moedas de prata e possíveis itens: {', '.join(tabela.curios)}"
                 )
-                return
-        print("Os ventos não trouxeram recompensas materiais desta vez.")
+                print(mensagem)
+                return {"coins": tabela.coins, "itens": tabela.curios, "mensagem": mensagem}
+        mensagem = "Os ventos não trouxeram recompensas materiais desta vez."
+        print(mensagem)
+        return {"mensagem": mensagem}
 
     # ----- utilidades -----
-    def mostrar_ficha(self) -> None:
+    def mostrar_ficha(self) -> Optional[str]:
         if not self.personagem:
             print("Nenhuma ficha registrada.")
+            return None
+        resumo = self.personagem.resumo()
+        print(resumo)
+        return resumo
+
+    def _exibir_resultado(self, resultado: Dict[str, Any]) -> None:
+        if not resultado.get("consentido", True):
+            print(resultado.get("mensagem"))
             return
-        print(self.personagem.resumo())
+        print(f"Tipo de teste: {resultado.get('tipo')}")
+        dados = resultado.get("dados", [])
+        if dados:
+            expressao = resultado.get("expressao", "")
+            bonus = resultado.get("bonus", 0)
+            total = resultado.get("total")
+            print(
+                f"Rolagem: {expressao} + {bonus:+} = {total} | CD {resultado.get('dificuldade')}"
+            )
+        print(resultado.get("mensagem"))
+        if resultado.get("dano"):
+            dano = resultado["dano"]
+            if "erro" in dano:
+                print(dano["erro"])
+            elif "detalhes" in dano:
+                print(f"Dano causado: {dano['detalhes']} = {dano['total']} ({dano['efeito']})")
+            else:
+                print(f"Efeito: {dano.get('efeito')}")

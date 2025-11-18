@@ -23,7 +23,8 @@ def main() -> None:
             mestre.iniciar_criacao_personagem()
         elif escolha == "2":
             try:
-                mestre.iniciar_capitulo()
+                capitulo = mestre.iniciar_capitulo()
+                print(capitulo.introducao())
             except RuntimeError as exc:
                 print(str(exc))
         elif escolha == "3":
